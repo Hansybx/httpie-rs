@@ -1,8 +1,8 @@
-use std::str::FromStr;
+use std::{str::FromStr, collections::HashMap};
 
-use anyhow::{Ok, Result,anyhow};
+use anyhow::{anyhow, Ok, Result};
 use clap::{command, Args, Parser, Subcommand};
-use reqwest::Url;
+use reqwest::{header, Client, Response, Url};
 
 #[derive(Parser, Debug)]
 #[command(name = "Httpie-rs")]
@@ -27,6 +27,12 @@ struct Get {
     url: String,
 }
 
+async fn get(client: Client, args: &Get) -> Result<()> {
+    let res = client.get(&args.url).send().await?;
+    println!("{:?}", res.text().await?);
+    Ok(())
+}
+
 // post 子命令。需要输入一个 URL，和若干个可选的 key=value，用于提供 json body
 #[derive(Args, Debug)]
 struct Post {
@@ -36,12 +42,22 @@ struct Post {
     body: Vec<KvPair>,
 }
 
+async fn post(client: Client, args: &Post) -> Result<()> {
+    let mut body = HashMap::new();
+    for pair in args.body.iter() {
+        body.insert(&pair.k, &pair.v);
+    }
+    let res = client.post(&args.url).json(&body).send().await?;
+    println!("{:?}", res.text().await?);
+    Ok(())
+}
+
 fn parse_url(url: &str) -> Result<String> {
     let _url: Url = url.parse()?;
     Ok(url.into())
 }
 
-#[derive(PartialEq,Clone,Debug)]
+#[derive(PartialEq, Clone, Debug)]
 struct KvPair {
     k: String,
     v: String,
@@ -68,8 +84,14 @@ fn parse_kv_pair(s: &str) -> Result<KvPair> {
     Ok(s.parse()?)
 }
 
-fn main() {
+#[tokio::main]
+async fn main() -> Result<()> {
     println!("Hello, world!");
     let opts: Opts = Opts::parse();
-    println!("{:?}", opts);
+    let client = Client::new();
+    let result = match opts.subcmd {
+        SubCommond::Get(ref args) => get(client, args).await?,
+        SubCommond::Post(ref args) => post(client, args).await?,
+    };
+    Ok(result)
 }
