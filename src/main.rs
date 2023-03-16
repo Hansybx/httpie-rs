@@ -1,7 +1,9 @@
-use std::{str::FromStr, collections::HashMap};
+use std::{collections::HashMap, str::FromStr};
 
 use anyhow::{anyhow, Ok, Result};
 use clap::{command, Args, Parser, Subcommand};
+use colored::Colorize;
+use mime::Mime;
 use reqwest::{header, Client, Response, Url};
 
 #[derive(Parser, Debug)]
@@ -29,8 +31,7 @@ struct Get {
 
 async fn get(client: Client, args: &Get) -> Result<()> {
     let res = client.get(&args.url).send().await?;
-    println!("{:?}", res.text().await?);
-    Ok(())
+    Ok(print_response(res).await?)
 }
 
 // post 子命令。需要输入一个 URL，和若干个可选的 key=value，用于提供 json body
@@ -48,8 +49,7 @@ async fn post(client: Client, args: &Post) -> Result<()> {
         body.insert(&pair.k, &pair.v);
     }
     let res = client.post(&args.url).json(&body).send().await?;
-    println!("{:?}", res.text().await?);
-    Ok(())
+    Ok(print_response(res).await?)
 }
 
 fn parse_url(url: &str) -> Result<String> {
@@ -84,14 +84,98 @@ fn parse_kv_pair(s: &str) -> Result<KvPair> {
     Ok(s.parse()?)
 }
 
+// 打印服务器版本号 + 状态码
+fn print_status(res: &Response) {
+    let status = format!("{:?} {}", res.version(), res.status()).blue();
+    println!("{}\n", status);
+}
+
+// 打印服务器返回的 HTTP header
+fn print_headers(res: &Response) {
+    for (name, value) in res.headers() {
+        println!("{}: {:?}", name.to_string().green(), value);
+    }
+
+    print!("\n");
+}
+
+// 打印服务器返回的 HTTP body
+fn print_body(m: Option<Mime>, body: &String) {
+    match m {
+        Some(v) if v == mime::APPLICATION_JSON => {
+            println!("{}", jsonxf::pretty_print(body).unwrap().cyan())
+        }
+        _ => println!("{}", body),
+    }
+}
+
+/// 打印整个响应
+async fn print_response(res: Response) -> Result<()> {
+    print_status(&res);
+    print_headers(&res);
+    let mime = get_content_type(&res);
+    let body = res.text().await?;
+    print_body(mime, &body);
+    Ok(())
+}
+
+/// 将服务器返回的 content-type 解析成 Mime 类型
+fn get_content_type(res: &Response) -> Option<Mime> {
+    res.headers()
+        .get(header::CONTENT_TYPE)
+        .map(|v| v.to_str().unwrap().parse().unwrap())
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     println!("Hello, world!");
     let opts: Opts = Opts::parse();
-    let client = Client::new();
+
+    let mut headers = header::HeaderMap::new();
+    // 为我们的 HTTP 客户端添加一些缺省的 HTTP 头
+    headers.insert("X-POWERED-BY", "Rust".parse()?);
+    headers.insert(header::USER_AGENT, "Rust Httpie".parse()?);
+
+    let client = reqwest::Client::builder()
+        .default_headers(headers)
+        .build()?;
+
     let result = match opts.subcmd {
         SubCommond::Get(ref args) => get(client, args).await?,
         SubCommond::Post(ref args) => post(client, args).await?,
     };
     Ok(result)
+}
+
+// 仅在 cargo test 时才编译
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_url_works() {
+        assert!(parse_url("abc").is_err());
+        assert!(parse_url("http://abc.xyz").is_ok());
+        assert!(parse_url("https://httpbin.org/post").is_ok());
+    }
+
+    #[test]
+    fn parse_kv_pair_works() {
+        assert!(parse_kv_pair("a").is_err());
+        assert_eq!(
+            parse_kv_pair("a=1").unwrap(),
+            KvPair {
+                k: "a".into(),
+                v: "1".into()
+            }
+        );
+
+        assert_eq!(
+            parse_kv_pair("b=").unwrap(),
+            KvPair {
+                k: "b".into(),
+                v: "".into()
+            }
+        );
+    }
 }
