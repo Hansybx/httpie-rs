@@ -6,6 +6,11 @@ use colored::Colorize;
 use mime::Mime;
 use reqwest::{header, Client, Response, Url};
 
+use syntect::easy::HighlightLines;
+use syntect::highlighting::{Style, ThemeSet};
+use syntect::parsing::SyntaxSet;
+use syntect::util::{as_24_bit_terminal_escaped, LinesWithEndings};
+
 #[derive(Parser, Debug)]
 #[command(name = "Httpie-rs")]
 #[command(author = "Hansybx <hansybx@outlook.com>")]
@@ -103,10 +108,26 @@ fn print_headers(res: &Response) {
 fn print_body(m: Option<Mime>, body: &String) {
     match m {
         Some(v) if v == mime::APPLICATION_JSON => {
-            println!("{}", jsonxf::pretty_print(body).unwrap().cyan())
+            print_body_in_syntect(jsonxf::pretty_print(body).unwrap().as_str())
         }
         _ => println!("{}", body),
     }
+}
+
+fn print_body_in_syntect(body_str: &str) {
+    // Load these once at the start of your program
+    let ps = SyntaxSet::load_defaults_newlines();
+    let ts = ThemeSet::load_defaults();
+
+    let syntax = ps.find_syntax_by_extension("rs").unwrap();
+    let mut h = HighlightLines::new(syntax, &ts.themes["base16-ocean.dark"]);
+    // let s = "pub struct Wow { hi: u64 }\nfn blah() -> u64 {}";
+    for line in LinesWithEndings::from(body_str) {
+        let ranges: Vec<(Style, &str)> = h.highlight_line(line, &ps).unwrap();
+        let escaped = as_24_bit_terminal_escaped(&ranges[..], true);
+        print!("{}", escaped);
+    }
+    println!("")
 }
 
 /// 打印整个响应
